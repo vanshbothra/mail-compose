@@ -5,6 +5,8 @@ const dotenv = require('dotenv');
 dotenv.config();
 const nodemailer = require('nodemailer');
 const { google } = require('googleapis');
+const multer = require('multer')
+const router = express.Router();
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -36,6 +38,7 @@ const TRANSPORTER = nodemailer.createTransport({
 // Middleware to parse JSON bodies
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/', router);
 
 // Function to read JSON file
 function readJsonFile(filePath) {
