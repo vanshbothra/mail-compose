@@ -26,7 +26,7 @@ const TRANSPORTER = nodemailer.createTransport({
     service: 'gmail',
     auth: {
         user: process.env.MAIL_ID,
-        pass: process.env.PASSWORD
+        pass: process.env.MAIL_PASSWORD
     }
 });
 
@@ -49,44 +49,170 @@ imap.once('ready', function () {
     });
 });
 
-function checkEmails() {
-    // Calculate date 1 hour ago
-    const oneHourAgo = new Date();
-    oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+// function checkEmails() {
+//     // Calculate date 1 hour ago
+//     const oneHourAgo = new Date();
+//     oneHourAgo.setHours(oneHourAgo.getHours() - 1);
 
-    // Search for unseen messages from the last hour
+//     // Search for unseen messages from the last hour
+//     imap.search([
+//         'UNSEEN',
+//         ['SINCE', oneHourAgo]
+//     ], (err, results) => {
+//         if (err || !results.length) return;
+
+//         const fetch = imap.fetch(results, { bodies: ['HEADER.FIELDS (SUBJECT FROM REFERENCES IN-REPLY-TO)', 'TEXT'], markSeen: true });
+
+//         fetch.on('message', (msg) => {
+//             let emailBody = '';
+//             let subject = '';
+//             let fromEmail = '';
+//             let references = '';
+//             let inReplyTo = '';
+
+//             msg.on('body', (stream, info) => {
+//                 let buffer = '';
+//                 stream.on('data', (chunk) => {
+//                     buffer += chunk.toString('utf8');
+//                 });
+
+//                 stream.on('end', () => {
+//                     if (info.which === 'HEADER.FIELDS (SUBJECT FROM REFERENCES IN-REPLY-TO)') {
+//                         const header = Imap.parseHeader(buffer);
+//                         subject = header.subject?.[0] || '';
+//                         fromEmail = header.from?.[0] || '';
+//                         references = header.references?.[0] || '';
+//                         inReplyTo = header['in-reply-to']?.[0] || '';
+//                     } else {
+//                         emailBody = buffer.toLowerCase();
+//                     }
+//                 });
+//             });
+
+//             msg.once('end', () => {
+//                 // Process the email after all parts are received
+//                 if (emailBody.includes('approved')) {
+//                     console.log('Approval detected in reply. Finding original email...');
+//                     console.log('Subject:', subject, 'InReplyTo:', inReplyTo, 'References:', references);
+//                     findOriginalEmail(inReplyTo || references.split(' ').pop());
+//                 }
+//             });
+//         });
+
+//         fetch.once('error', (err) => console.error('Fetch error:', err));
+//     });
+// }
+
+// function findOriginalEmail(messageId) {
+//     if (!messageId) {
+//         console.error('No message ID found to search for original email');
+//         return;
+//     }
+
+//     console.log('Searching for original email with message ID:', messageId);
+
+//     imap.search([['HEADER', 'IN-REPLY-TO', messageId]], (err, results) => {
+//         if (err || !results.length) {
+//             console.error('Original email not found:', err);
+//             return;
+//         }
+//         console.log("Results after searching by message ID", results);
+//         const fetch = imap.fetch(results, { bodies: '' });
+//         console.log("Fetch", fetch);
+//         fetch.on('message', (msg) => {
+//             msg.on('body', (stream) => {
+//                 simpleParser(stream, async (err, parsed) => {
+//                     if (err) {
+//                         console.error('Error parsing original email:', err);
+//                         return;
+//                     }
+//                     forwardEmail(parsed);
+//                 });
+//             });
+//         });
+
+//         fetch.once('error', (err) => console.error('Fetch error:', err));
+//     });
+// }
+
+// function forwardEmail(parsedEmail) {
+//     // Hardcoded array of recipients
+//     const recipientEmails = [
+//         'ibrahim.khalil_ug25@ashoka.edu.in'
+//     ];
+
+//     const mailOptions = {
+//         from: process.env.MAIL_ID,
+//         to: recipientEmails.join(','),
+//         subject: `${parsedEmail.subject}`,
+//         text: parsedEmail.text,
+//         html: parsedEmail.html,
+//         attachments: parsedEmail.attachments
+//     };
+
+//     TRANSPORTER.sendMail(mailOptions, (error, info) => {
+//         if (error) {
+//             console.error('Forwarding error:', error);
+//             return;
+//         }
+//         console.log('Email forwarded successfully:', info.messageId);
+//     });
+// }
+
+function checkEmails() {
+    const oneHourAgo = new Date();
+    oneHourAgo.setHours(oneHourAgo.getHours() - 24);
+
     imap.search([
         'UNSEEN',
         ['SINCE', oneHourAgo]
     ], (err, results) => {
         if (err || !results.length) return;
 
-        const fetch = imap.fetch(results, { bodies: '', markSeen: true });
+        const fetch = imap.fetch(results, { bodies: ['HEADER.FIELDS (SUBJECT FROM REFERENCES IN-REPLY-TO MESSAGE-ID)', 'TEXT'], markSeen: true });
 
         fetch.on('message', (msg) => {
             let emailBody = '';
             let subject = '';
             let fromEmail = '';
+            let references = '';
+            let inReplyTo = '';
+            let messageId = '';
 
-            msg.on('body', (stream) => {
-                simpleParser(stream, async (err, parsed) => {
-                    if (err) return console.error('Parsing error:', err);
-                    
-                    emailBody = parsed.text.toLowerCase();
-                    subject = parsed.subject || '';
-                    fromEmail = parsed.from.value[0].address;
+            msg.on('body', (stream, info) => {
+                let buffer = '';
+                stream.on('data', (chunk) => {
+                    buffer += chunk.toString('utf8');
+                });
 
-                    console.log(`Email from: ${fromEmail}`);
-                    console.log(`Subject: ${subject}`);
-
-                    if (emailBody.includes('approved')) {
-                        console.log('Approval detected. Forwarding original email...');
-                        forwardEmail(parsed);
-                    } else if (emailBody.includes('rejected')) {
-                        console.log('Rejection detected. Forwarding original email...');
-                        forwardEmail(parsed);
+                stream.on('end', () => {
+                    if (info.which === 'HEADER.FIELDS (SUBJECT FROM REFERENCES IN-REPLY-TO MESSAGE-ID)') {
+                        const header = Imap.parseHeader(buffer);
+                        subject = header.subject?.[0] || '';
+                        fromEmail = header.from?.[0] || '';
+                        references = header.references?.[0] || '';
+                        inReplyTo = header['in-reply-to']?.[0] || '';
+                        messageId = header['message-id']?.[0] || ''; // Capture Message-ID
+                    } else {
+                        emailBody = buffer.toLowerCase();
+                        console.log("Email Body", emailBody);
                     }
                 });
+            });
+
+            msg.once('end', () => {
+                if (emailBody.includes('approved')) {
+                    console.log('Approval detected in reply. Finding original email...');
+                    console.log('Subject:', subject, 'InReplyTo:', inReplyTo, 'References:', references, 'Message-ID:', messageId);
+
+                    // Start backtracking from this message ID
+                    const firstMessageId = messageId || (references ? references.split(' ').pop() : null);
+                    if (!firstMessageId) {
+                        console.error('No thread reference found, skipping...');
+                        return;
+                    }
+                    findFirstEmail(firstMessageId);
+                }
             });
         });
 
@@ -94,20 +220,73 @@ function checkEmails() {
     });
 }
 
+function findFirstEmail(messageId) {
+    if (!messageId) {
+        console.error('No message ID found to search for original email');
+        return;
+    }
+
+    const formattedMessageId = messageId.startsWith('<') ? messageId : `<${messageId}>`;
+
+    console.log('Searching for the first email in the thread using Message-ID:', formattedMessageId);
+
+    imap.search([['HEADER', 'MESSAGE-ID', formattedMessageId]], (err, results) => { 
+        if (err || !results.length) {
+            console.warn('Email not found using MESSAGE-ID. Trying IN-REPLY-TO...');
+
+            // If MESSAGE-ID fails, try searching for IN-REPLY-TO
+            imap.search([['HEADER', 'IN-REPLY-TO', formattedMessageId]], (err, results) => { 
+                if (err || !results.length) {
+                    console.error('Original email not found using IN-REPLY-TO either:', err || 'No matching results');
+                    return;
+                }
+                fetchOriginalEmail(results);
+            });
+        } else {
+            fetchOriginalEmail(results);
+        }
+    });
+}
+
+function fetchOriginalEmail(results) {
+    console.log('Fetching the first email in the thread...');
+    const fetch = imap.fetch(results, { bodies: '', struct: true });
+
+    fetch.on('message', (msg) => {
+        msg.on('body', (stream) => {
+            simpleParser(stream, async (err, parsed) => {
+                if (err) {
+                    console.error('Error parsing original email:', err);
+                    return;
+                }
+                forwardEmail(parsed);
+            });
+        });
+    });
+
+    fetch.once('error', (err) => console.error('Fetch error:', err));
+}
+
 function forwardEmail(parsedEmail) {
-    const forwardRecipients = ['ibrahim.khalil_ug25@ashoka.edu.in'];
+    const recipientEmails = [
+        'ibrahim.khalil_ug25@ashoka.edu.in',
+    ];
 
     const mailOptions = {
-        from: process.env.SMTP_USER,
-        to: forwardRecipients.join(','),
-        subject: parsedEmail.subject,
-        text: `${parsedEmail.text}`,
-        html: `<p>${parsedEmail.html}</p>`
+        from: process.env.MAIL_ID,
+        to: recipientEmails.join(','), // Forward to custom recipients
+        subject: `${parsedEmail.subject}`,
+        text: parsedEmail.text,
+        html: parsedEmail.html,
+        attachments: parsedEmail.attachments
     };
 
     TRANSPORTER.sendMail(mailOptions, (error, info) => {
-        if (error) return console.error('Forwarding error:', error);
-        console.log('Email forwarded successfully:', info.messageId);
+        if (error) {
+            console.error('Forwarding error:', error);
+            return;
+        }
+        console.log('Original email forwarded successfully:', info.messageId);
     });
 }
 
