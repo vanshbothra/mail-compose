@@ -7,9 +7,117 @@ const nodemailer = require('nodemailer');
 const { google } = require('googleapis');
 const multer = require('multer')
 const router = express.Router();
+const Imap = require('node-imap');
+const { simpleParser } = require('mailparser');
 
 const app = express();
 const port = process.env.PORT || 3000;
+
+const imapConfig = {
+    user: process.env.MAIL_ID,
+    password: process.env.MAIL_PASSWORD,
+    host: process.env.IMAP_HOST,
+    port: 993, // IMAP Port for Gmail
+    tls: true,
+    tlsOptions: { rejectUnauthorized: false }
+};
+
+const TRANSPORTER = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env.MAIL_ID,
+        pass: process.env.PASSWORD
+    }
+});
+
+const imap = new Imap(imapConfig);
+
+function openInbox(cb) {
+    imap.openBox('INBOX', false, cb);
+}
+
+imap.once('ready', function () {
+    openInbox((err, box) => {
+        if (err) throw err;
+        console.log(`Listening for new emails in ${box.name}...`);
+
+        // Listen for new mail
+        imap.on('mail', function () {
+            console.log('New email detected...');
+            checkEmails();
+        });
+    });
+});
+
+function checkEmails() {
+    // Calculate date 1 hour ago
+    const oneHourAgo = new Date();
+    oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+
+    // Search for unseen messages from the last hour
+    imap.search([
+        'UNSEEN',
+        ['SINCE', oneHourAgo]
+    ], (err, results) => {
+        if (err || !results.length) return;
+
+        const fetch = imap.fetch(results, { bodies: '', markSeen: true });
+
+        fetch.on('message', (msg) => {
+            let emailBody = '';
+            let subject = '';
+            let fromEmail = '';
+
+            msg.on('body', (stream) => {
+                simpleParser(stream, async (err, parsed) => {
+                    if (err) return console.error('Parsing error:', err);
+                    
+                    emailBody = parsed.text.toLowerCase();
+                    subject = parsed.subject || '';
+                    fromEmail = parsed.from.value[0].address;
+
+                    console.log(`Email from: ${fromEmail}`);
+                    console.log(`Subject: ${subject}`);
+
+                    if (emailBody.includes('approved')) {
+                        console.log('Approval detected. Forwarding original email...');
+                        forwardEmail(parsed);
+                    } else if (emailBody.includes('rejected')) {
+                        console.log('Rejection detected. Forwarding original email...');
+                        forwardEmail(parsed);
+                    }
+                });
+            });
+        });
+
+        fetch.once('error', (err) => console.error('Fetch error:', err));
+    });
+}
+
+function forwardEmail(parsedEmail) {
+    const forwardRecipients = ['ibrahim.khalil_ug25@ashoka.edu.in'];
+
+    const mailOptions = {
+        from: process.env.SMTP_USER,
+        to: forwardRecipients.join(','),
+        subject: parsedEmail.subject,
+        text: `${parsedEmail.text}`,
+        html: `<p>${parsedEmail.html}</p>`
+    };
+
+    TRANSPORTER.sendMail(mailOptions, (error, info) => {
+        if (error) return console.error('Forwarding error:', error);
+        console.log('Email forwarded successfully:', info.messageId);
+    });
+}
+
+imap.once('error', (err) => console.error('IMAP Error:', err));
+imap.once('end', () => {
+    console.log('IMAP Connection closed. Reconnecting...');
+    setTimeout(() => imap.connect(), 5000); // Reconnect after 5 seconds
+});
+
+imap.connect();
 
 const upload = multer({ dest: "uploads/" });
 
@@ -27,18 +135,11 @@ const oauth2Client = new google.auth.OAuth2(
 oauth2Client.setCredentials({ refresh_token: DRIVE_REFRESH_TOKEN });
 const drive = google.drive({ version: "v3", auth: oauth2Client });
 
-const TRANSPORTER = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: process.env.MAIL_ID,
-        pass: process.env.PASSWORD
-    }
-});
-
 // Middleware to parse JSON bodies
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/', router);
+app.use(express.static('public'));
 
 // Function to read JSON file
 function readJsonFile(filePath) {
@@ -96,9 +197,10 @@ app.set('view engine', 'ejs');
 
 router.get('/dashboard', async (req, res) => {
     // Get all pending emails
-    const emails = readJsonFile('emails.json') || [];
+    // const emails = readJsonFile('emails.json') || [];
     // const pendingEmails = emails.filter((email) => email.status === 'pending');
-    res.render('dashboard', { pendingEmails });
+    // res.render('dashboard', { pendingEmails });
+    res.render('dashboard');
 });
 
 router.get('/', async (req, res) => {
