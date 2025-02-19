@@ -12,6 +12,7 @@ const { simpleParser } = require('mailparser');
 
 const app = express();
 const port = process.env.PORT || 3000;
+const upload = multer({ dest: 'uploads/' });
 
 const imapConfig = {
     user: process.env.MAIL_ID,
@@ -49,6 +50,88 @@ imap.once('ready', function () {
     });
 });
 
+// function checkEmails() {
+//     const oneHourAgo = new Date();
+//     oneHourAgo.setHours(oneHourAgo.getHours() - 24);
+
+//     imap.search([
+//         'UNSEEN',
+//         ['SINCE', oneHourAgo]
+//     ], (err, results) => {
+//         if (err || !results.length) return;
+
+//         const fetch = imap.fetch(results, { bodies: ['HEADER.FIELDS (SUBJECT FROM REFERENCES IN-REPLY-TO MESSAGE-ID)', 'TEXT'], markSeen: true });
+
+//         fetch.on('message', (msg) => {
+//             let emailBody = '';
+//             let subject = '';
+//             let fromEmail = '';
+//             let references = '';
+//             let inReplyTo = '';
+//             let messageId = '';
+//             let html_data = '';
+//             let mailtoIndex = -1;
+
+//             msg.on('body', (stream, info) => {
+//                 let buffer = '';
+//                 simpleParser(stream, (err, parsed) => {
+//                     if (err) {
+//                         console.error('Parsing error:', err);
+//                         return;
+//                     }
+//                     console.log('Email Details:');
+//                     console.log('Text:', parsed.text);
+//                     console.log('HTML Body:', parsed.textAsHtml);
+//                     html_data = parsed.textAsHtml;
+//                     if (html_data) {
+//                         mailtoIndex = html_data.indexOf(`mailto:${process.env.MAIL_ID}`);
+//                     }
+//                     if (mailtoIndex !== -1) {
+//                         html_data = html_data.substring(0, mailtoIndex + `mailto:${process.env.MAIL_ID}`.length);
+//                     }
+//                 });
+//                 stream.on('data', (chunk) => {
+//                     buffer += chunk.toString('utf8');
+//                 });
+
+//                 stream.on('end', () => {
+//                     if (info.which === 'HEADER.FIELDS (SUBJECT FROM REFERENCES IN-REPLY-TO MESSAGE-ID)') {
+//                         const header = Imap.parseHeader(buffer);
+//                         subject = header.subject?.[0] || '';
+//                         fromEmail = header.from?.[0] || '';
+//                         references = header.references?.[0] || '';
+//                         inReplyTo = header['in-reply-to']?.[0] || '';
+//                         messageId = header['message-id']?.[0] || ''; // Capture Message-ID
+//                     } else {
+//                         emailBody = buffer.toLowerCase();
+//                         // console.log("Email Body", emailBody);
+//                     }
+//                 });
+//             });
+
+//             msg.once('end', () => {
+//                 console.log('HTML Data:', html_data);
+//                 if (html_data.includes('approved')) {
+//                     console.log('Approval detected in reply. Finding original email...');
+//                     console.log('Subject:', subject, 'InReplyTo:', inReplyTo, 'References:', references, 'Message-ID:', messageId);
+
+//                     // Start backtracking from this message ID
+//                     const firstMessageId = inReplyTo || (references ? references.split(' ').pop() : null);
+//                     if (!firstMessageId) {
+//                         console.error('No thread reference found, skipping...');
+//                         return;
+//                     }
+//                     searchSentEmailById(firstMessageId);
+//                 } else {
+//                     console.log('No approval detected in reply. Skipping...');
+//                 }
+//             });
+//         });
+
+//         fetch.once('error', (err) => console.error('Fetch error:', err));
+//     });
+// }
+
 function checkEmails() {
     const oneHourAgo = new Date();
     oneHourAgo.setHours(oneHourAgo.getHours() - 24);
@@ -59,49 +142,65 @@ function checkEmails() {
     ], (err, results) => {
         if (err || !results.length) return;
 
-        const fetch = imap.fetch(results, { bodies: ['HEADER.FIELDS (SUBJECT FROM REFERENCES IN-REPLY-TO MESSAGE-ID)', 'TEXT'], markSeen: true });
+        const fetch = imap.fetch(results, { 
+            bodies: ['HEADER.FIELDS (SUBJECT FROM REFERENCES IN-REPLY-TO MESSAGE-ID)', 'TEXT'], 
+            markSeen: true 
+        });
 
         fetch.on('message', (msg) => {
-            let emailBody = '';
-            let subject = '';
-            let fromEmail = '';
-            let references = '';
             let inReplyTo = '';
             let messageId = '';
+            let fromEmail = '';
 
             msg.on('body', (stream, info) => {
-                let buffer = '';
-                stream.on('data', (chunk) => {
-                    buffer += chunk.toString('utf8');
-                });
-
-                stream.on('end', () => {
-                    if (info.which === 'HEADER.FIELDS (SUBJECT FROM REFERENCES IN-REPLY-TO MESSAGE-ID)') {
+                if (info.which === 'HEADER.FIELDS (SUBJECT FROM REFERENCES IN-REPLY-TO MESSAGE-ID)') {
+                    let buffer = '';
+                    stream.on('data', (chunk) => {
+                        buffer += chunk.toString('utf8');
+                    });
+                    stream.on('end', () => {
                         const header = Imap.parseHeader(buffer);
-                        subject = header.subject?.[0] || '';
-                        fromEmail = header.from?.[0] || '';
-                        references = header.references?.[0] || '';
                         inReplyTo = header['in-reply-to']?.[0] || '';
-                        messageId = header['message-id']?.[0] || ''; // Capture Message-ID
-                    } else {
-                        emailBody = buffer.toLowerCase();
-                        console.log("Email Body", emailBody);
-                    }
-                });
-            });
+                        messageId = header['message-id']?.[0] || '';
+                        // Extract sender's email from the 'from' header
+                        fromEmail = header.from?.[0] || '';
+                        // Clean up email address (remove name and angle brackets)
+                        fromEmail = fromEmail.match(/<(.+)>/)?.[1] || fromEmail;
+                    });
+                } else {
+                    // Parse email body
+                    simpleParser(stream, (err, parsed) => {
+                        if (err) {
+                            console.error('Parsing error:', err);
+                            return;
+                        }
 
-            msg.once('end', () => {
-                if (emailBody.includes('approved')) {
-                    console.log('Approval detected in reply. Finding original email...');
-                    console.log('Subject:', subject, 'InReplyTo:', inReplyTo, 'References:', references, 'Message-ID:', messageId);
+                        let html = parsed.textAsHtml || '';
+                        const mailtoIndex = html.indexOf(`mailto:${process.env.MAIL_ID}`);
+                        
+                        if (mailtoIndex !== -1) {
+                            // Trim everything after mailto
+                            html = html.substring(0, mailtoIndex);
+                        }
 
-                    // Start backtracking from this message ID
-                    const firstMessageId = inReplyTo || (references ? references.split(' ').pop() : null);
-                    if (!firstMessageId) {
-                        console.error('No thread reference found, skipping...');
-                        return;
-                    }
-                    searchSentEmailById(firstMessageId);
+                        // Check if the sender is the approver and the message contains 'approved'
+                        if (fromEmail.toLowerCase() === process.env.APPROVER_EMAIL.toLowerCase() && 
+                            html.toLowerCase().includes('approved')) {
+                            console.log('Approval detected from authorized approver.');
+                            if (inReplyTo) {
+                                console.log('Original message ID:', inReplyTo);
+                                searchSentEmailById(inReplyTo);
+                            } else {
+                                console.error('No in-reply-to header found');
+                            }
+                        } else {
+                            console.log('No valid approval detected:', {
+                                isApprover: fromEmail.toLowerCase() === process.env.APPROVER_EMAIL.toLowerCase(),
+                                hasApprovalText: html.toLowerCase().includes('approved'),
+                                fromEmail: fromEmail
+                            });
+                        }
+                    });
                 }
             });
         });
@@ -184,7 +283,7 @@ function forwardEmail(parsedEmail) {
         from: `Organisation Mail <${process.env.MAIL_ID}>`,
         to: recipientEmails.join(','), // Forward to custom recipients
         subject: `${parsedEmail.subject}`,
-        text: parsedEmail.text,
+        // text: parsedEmail.text,
         html: parsedEmail.html,
         attachments: parsedEmail.attachments
     };
