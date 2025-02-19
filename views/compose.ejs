@@ -99,17 +99,7 @@
                                                 directing emails to specific audiences within Ashoka University.
                                             </p>
                                             <!-- HTML Form -->
-                                            <form id="myForm" action="/compose" method="POST"
-                                                enctype="multipart/form-data">
-                                                <div class="mb-3">
-                                                    <label for="newTicketTitle" class="form-label">Enter Contact Number
-                                                        <span style="color:rgb(177, 58, 58)">*</span></label>
-                                                    <input required minlength="10" maxlength="14" name="phone"
-                                                        type="tel" class="form-control" id="phoneNumber"
-                                                        pattern="[0-9]{10}" value=""
-                                                        title="Please enter a valid 10-digit phone number without spaces or special characters.">
-                                                    <div id="phone-number-error" class="text-danger"></div>
-                                                </div>
+                                            <form id="myForm" method="POST" enctype="multipart/form-data">
                                                 <label for="select" class="form-label">Select Your Category of Mail<span
                                                         style="color:rgb(177, 58, 58)">*</span></label>
                                                 <select required name="alias" id="alias" class="form-select">
@@ -125,19 +115,6 @@
                                                     <option value="Promotions">Promotions</option>
                                                 </select>
                                                 <br />
-                                                <label for="select" class="form-label">Select Recipients<span
-                                                        style="color:rgb(177, 58, 58)">*</span></label>
-                                                <select required name="recipients" id="select-recipients"
-                                                    class="form-select" multiple size="6">
-                                                    <option disabled>Select</option>
-                                                    <option value="students@ashoka.edu.in">All Students</option>
-                                                    <option value="asp2025@ashoka.edu.in">ASP25</option>
-                                                    <option value="ug2022@ashoka.edu.in">UG26</option>
-                                                    <option value="ug2023@ashoka.edu.in">UG2023</option>
-                                                    <option value="ug2024@ashoka.edu.in">UG2024</option>
-                                                </select>
-                                                <p style="font-size:14px;color:rgb(192, 58, 58);">hold the ctrl/cmd key
-                                                    to select multiple options</p>
                                                 <label for="subject" class="form-label">Subject (of mail)<span
                                                         style="color:rgb(177, 58, 58)">*</span></label>
                                                 <input required name="subject" type="title" class="form-control"
@@ -149,7 +126,7 @@
                                                 <textarea style="margin-top:60px;padding:30px;" id="editor"
                                                     name="mail_body"></textarea>
                                                 <p style="font-size:14px;">PLEASE NOTE: The mail that you send out will
-                                                    have you in CC and your signature at the bottom.</p>
+                                                    have you in CC.</p>
                                                 <br />
                                                 <label for="files" class="form-label">File Attachments (if
                                                     any)</span></label>
@@ -174,7 +151,7 @@
                                                     onclick="clearEditor();">Cancel Mail</button>
                                             </form>
                                             <script>
-                                                document.getElementById("myForm").addEventListener("submit", function (event) {
+                                                document.getElementById("myForm").addEventListener("submit", async function (event) {
                                                     event.preventDefault(); // Prevent form submission for validation
                                               
                                                     var fileInput = document.getElementById('file');
@@ -183,13 +160,12 @@
                                                     for(var i=0;i<files.length;i++){
                                                         fileSizeSum += files[i].size
                                                     }
-                                                    var maxSize = 10 * 1024 * 1024; // 5MB in bytes 
+                                                    var maxSize = 10 * 1024 * 1024; // 10MB in bytes 
                                                     // Check file size
                                                     if (fileSizeSum > maxSize) {
                                                         alert('File size exceeds the 10MB limit.');
                                                         return;
                                                     }
-                                                    event.target.submit(); // This will submit the form if all checks pass
 
                                                     // Disable the button and show/hide relevant elements
                                                     document.getElementById('requestEmailBtn').disabled = true;
@@ -198,40 +174,36 @@
                                                     document.getElementById('requestEmailText').style.display = "none";
                                                     document.getElementById('requestEmailSpinner').style.display = "block";
                                                     
-                                                    setTimeout(() => {
-                                                        alert("Hold tight while we send your request to the SG!")
-                                                    }, 2000);  // 2000 ms = 2 second
-                                                });
+                                                    // setTimeout(() => {
+                                                    //     alert("Hold tight while we send your request to the SG!")
+                                                    // }, 2000);  // 2000 ms = 2 second
 
-                                                const phoneNumberInput = document.getElementById('phoneNumber');
-                                                const phoneNumberError = document.getElementById('phone-number-error');
-                                                let timeoutId;
+                                                    try {
+                                                        const formData = new FormData(this);
+                                                        formData.set('mailBody', editorInstance.getData()); // Get content from CKEditor
 
-                                                phoneNumberInput.addEventListener('keyup', function () {
-                                                    clearTimeout(timeoutId); // Clear any existing timeout
-                                                    timeoutId = setTimeout(validatePhoneNumber, 500); // Set a new timeout
-                                                });
+                                                        const response = await fetch('/compose', {
+                                                            method: 'POST',
+                                                            body: formData
+                                                        });
 
-                                                function validatePhoneNumber() {
-                                                    // Allow only 10-digit phone numbers
-                                                    const regex = /^\d{10}$/;
-
-                                                    if (!phoneNumberInput.value.match(regex)) {
-                                                        phoneNumberError.textContent = 'Please enter a valid 10-digit phone number.';
-                                                        phoneNumberInput.classList.add('is-invalid'); // Add Bootstrap class for visual feedback
-                                                        return 0;
-                                                    } else {
-                                                        phoneNumberError.textContent = '';
-                                                        phoneNumberInput.classList.remove('is-invalid'); // Remove Bootstrap class
-                                                        return 1;
+                                                        const data = await response.json();
+                                                        if (data.status === 200) {
+                                                            alert('Email request has been submitted successfully!');
+                                                            window.location.reload();
+                                                        } else {                                                            
+                                                            alert(data.error || 'Failed to send email request. Please try again.');
+                                                        }
+                                                    } catch (error) {
+                                                        console.error('Error:', error);
+                                                        alert('An error occurred while sending the email request. Please try again.');
+                                                    } finally {
+                                                        // Re-enable buttons and hide spinner
+                                                        document.getElementById('requestEmailBtn').disabled = false;
+                                                        document.getElementById('cancelButton').disabled = false;
+                                                        document.getElementById('requestEmailText').style.display = "block";
+                                                        document.getElementById('requestEmailSpinner').style.display = "none";
                                                     }
-                                                }
-
-                                                // Remove the validation message quickly after the user starts typing again
-                                                phoneNumberInput.addEventListener('keydown', function () {
-                                                    clearTimeout(timeoutId); // Clear the timeout to remove the message quickly
-                                                    phoneNumberError.textContent = '';
-                                                    phoneNumberInput.classList.remove('is-invalid'); // Remove Bootstrap class
                                                 });
                                             </script>
                                             <script>
