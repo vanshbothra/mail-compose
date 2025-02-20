@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>SG Platform</title>
+    <title>Tez | Compose</title>
     <link rel="shortcut icon" type="image/png" href="/platform/assets/images/logos/favicon.png" />
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="dataTables.css" />
@@ -60,47 +60,28 @@
     </style>
 
     <body>
-        <nav class="navbar navbar-expand-lg bg-body-tertiary">
-            <div class="container">
-              <a class="navbar-brand" href="/dashboard">
-                <!-- <img src="android-chrome-512x512.png" alt="Logo" width="30" height="30" class="d-inline-block align-text-top"> -->
-                Dashboard
-              </a>
-              <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
-                <span class="navbar-toggler-icon"></span>
-              </button>
-              <div class="collapse navbar-collapse" id="navbarSupportedContent">
-                <ul class="navbar-nav ms-auto">
-                  <li class="nav-item">
-                    <a class="nav-link active" aria-current="page" href="sg-compose-outbox.html">Outbox</a>
-                  </li>
-                  <li class="nav-item">
-                    <a class="nav-link active" aria-current="page" href="sg-compose.html">Compose</a>
-                  </li>
-                </ul>
-              </div>
-            </div>
-        </nav>
+        <%-include("./partials/navbar.ejs")%>
+
             <!--  Body Wrapper -->
             <div class="page-wrapper" id="main-wrapper" data-layout="vertical" data-navbarbg="skin6"
                 data-sidebartype="full" data-sidebar-position="fixed" data-header-position="fixed">
                     <!--  Main wrapper -->
                     <div class="body-wrapper">
-                            <div class="container-fluid">
+                            <div class="container-fluid" style="padding-top: 20px;">
                                 <div class="container">
                                     <div class="row" id="myItems">
                                         <div class="col-sm-12 mb-3">
-                                            <h3>Moving Forward; Not Just Forwards</h3>
-                                            <p>
+                                            <h1>Tez Mail</h1><br />
+                                            <!-- <p>
                                                 SG Compose is a streamlined email management platform designed for
                                                 Student Government, allowing students to submit requests that can be
                                                 quickly approved and automatically sent to targeted groups. The system
                                                 includes rich text editing, alias-based organization, and options for
                                                 directing emails to specific audiences within Ashoka University.
-                                            </p>
+                                            </p> -->
                                             <!-- HTML Form -->
                                             <form id="myForm" method="POST" enctype="multipart/form-data">
-                                                <label for="select" class="form-label">Select Your Category of Mail<span
+                                                <!-- <label for="select" class="form-label">Select Your Category of Mail<span
                                                         style="color:rgb(177, 58, 58)">*</span></label>
                                                 <select required name="alias" id="alias" class="form-select">
                                                     <option disabled selected value="">Select</option>
@@ -114,6 +95,11 @@
                                                     </option>
                                                     <option value="Promotions">Promotions</option>
                                                 </select>
+                                                <br /> -->
+                                                <label for="email" class="form-label">Reply-To Email Id<span
+                                                        style="color:rgb(177, 58, 58)">*</span></label>
+                                                <input required name="email" type="email" class="form-control"
+                                                    id="email">
                                                 <br />
                                                 <label for="subject" class="form-label">Subject (of mail)<span
                                                         style="color:rgb(177, 58, 58)">*</span></label>
@@ -129,14 +115,9 @@
                                                     have you in CC.</p>
                                                 <br />
                                                 <label for="files" class="form-label">File Attachments (if
-                                                    any)</span></label>
+                                                    any -- MAX 10MB TOTAL)</span></label>
                                                 <input style="background:white" multiple name="files" type="file"
                                                     class="form-control" id="file">
-                                                <br />
-                                                <label for="notes" class="form-label">Additional Notes (if any)</label>
-                                                <input name="notes" type="title" class="form-control"
-                                                    id="notes"
-                                                    placeholder="Use this space for any additional notes as requests to the approver">
                                                 <br />
                                                 <button class="btn btn-primary" type="submit" id="requestEmailBtn">
                                                     <span id="requestEmailText">Request Email</span>

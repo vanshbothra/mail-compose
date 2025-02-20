@@ -9,6 +9,7 @@ const multer = require('multer')
 const router = express.Router();
 const Imap = require('node-imap');
 const { simpleParser } = require('mailparser');
+const MAILING_LIST_FILE = 'mailingList.json';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -20,7 +21,9 @@ const imapConfig = {
     host: process.env.IMAP_HOST,
     port: 993, // IMAP Port for Gmail
     tls: true,
-    tlsOptions: { rejectUnauthorized: false }
+    tlsOptions: { rejectUnauthorized: false },
+    connTimeout: 10000, // Increase timeout to 10 seconds
+    authTimeout: 10000  // Increase auth timeout
 };
 
 const TRANSPORTER = nodemailer.createTransport({
@@ -32,6 +35,22 @@ const TRANSPORTER = nodemailer.createTransport({
 });
 
 const imap = new Imap(imapConfig);
+
+imap.connect();
+
+
+imap.once('error', (err) => {
+    console.error('IMAP Error:', err);
+    if (err.source === 'timeout') {
+        console.log('Reconnecting in 10 seconds...');
+        setTimeout(() => imap.connect(), 10000); // Retry connection
+    }
+});
+
+imap.once('end', () => {
+    console.log('IMAP Connection closed. Reconnecting...');
+    setTimeout(() => imap.connect(), 5000); // Reconnect after 5 seconds
+});
 
 function openInbox(cb) {
     imap.openBox('INBOX', false, cb);
@@ -50,87 +69,6 @@ imap.once('ready', function () {
     });
 });
 
-// function checkEmails() {
-//     const oneHourAgo = new Date();
-//     oneHourAgo.setHours(oneHourAgo.getHours() - 24);
-
-//     imap.search([
-//         'UNSEEN',
-//         ['SINCE', oneHourAgo]
-//     ], (err, results) => {
-//         if (err || !results.length) return;
-
-//         const fetch = imap.fetch(results, { bodies: ['HEADER.FIELDS (SUBJECT FROM REFERENCES IN-REPLY-TO MESSAGE-ID)', 'TEXT'], markSeen: true });
-
-//         fetch.on('message', (msg) => {
-//             let emailBody = '';
-//             let subject = '';
-//             let fromEmail = '';
-//             let references = '';
-//             let inReplyTo = '';
-//             let messageId = '';
-//             let html_data = '';
-//             let mailtoIndex = -1;
-
-//             msg.on('body', (stream, info) => {
-//                 let buffer = '';
-//                 simpleParser(stream, (err, parsed) => {
-//                     if (err) {
-//                         console.error('Parsing error:', err);
-//                         return;
-//                     }
-//                     console.log('Email Details:');
-//                     console.log('Text:', parsed.text);
-//                     console.log('HTML Body:', parsed.textAsHtml);
-//                     html_data = parsed.textAsHtml;
-//                     if (html_data) {
-//                         mailtoIndex = html_data.indexOf(`mailto:${process.env.MAIL_ID}`);
-//                     }
-//                     if (mailtoIndex !== -1) {
-//                         html_data = html_data.substring(0, mailtoIndex + `mailto:${process.env.MAIL_ID}`.length);
-//                     }
-//                 });
-//                 stream.on('data', (chunk) => {
-//                     buffer += chunk.toString('utf8');
-//                 });
-
-//                 stream.on('end', () => {
-//                     if (info.which === 'HEADER.FIELDS (SUBJECT FROM REFERENCES IN-REPLY-TO MESSAGE-ID)') {
-//                         const header = Imap.parseHeader(buffer);
-//                         subject = header.subject?.[0] || '';
-//                         fromEmail = header.from?.[0] || '';
-//                         references = header.references?.[0] || '';
-//                         inReplyTo = header['in-reply-to']?.[0] || '';
-//                         messageId = header['message-id']?.[0] || ''; // Capture Message-ID
-//                     } else {
-//                         emailBody = buffer.toLowerCase();
-//                         // console.log("Email Body", emailBody);
-//                     }
-//                 });
-//             });
-
-//             msg.once('end', () => {
-//                 console.log('HTML Data:', html_data);
-//                 if (html_data.includes('approved')) {
-//                     console.log('Approval detected in reply. Finding original email...');
-//                     console.log('Subject:', subject, 'InReplyTo:', inReplyTo, 'References:', references, 'Message-ID:', messageId);
-
-//                     // Start backtracking from this message ID
-//                     const firstMessageId = inReplyTo || (references ? references.split(' ').pop() : null);
-//                     if (!firstMessageId) {
-//                         console.error('No thread reference found, skipping...');
-//                         return;
-//                     }
-//                     searchSentEmailById(firstMessageId);
-//                 } else {
-//                     console.log('No approval detected in reply. Skipping...');
-//                 }
-//             });
-//         });
-
-//         fetch.once('error', (err) => console.error('Fetch error:', err));
-//     });
-// }
 
 function checkEmails() {
     const oneHourAgo = new Date();
@@ -138,8 +76,8 @@ function checkEmails() {
 
     imap.search([
         'UNSEEN',
-        ['SINCE', oneHourAgo]
-    ], (err, results) => {
+        ["FROM", process.env.APPROVER_EMAIL]
+        ], (err, results) => {
         if (err || !results.length) return;
 
         const fetch = imap.fetch(results, { 
@@ -185,7 +123,7 @@ function checkEmails() {
 
                         // Check if the sender is the approver and the message contains 'approved'
                         if (fromEmail.toLowerCase() === process.env.APPROVER_EMAIL.toLowerCase() && 
-                            html.toLowerCase().includes('approved')) {
+                            html.toLowerCase().includes('[approved]')) {
                             console.log('Approval detected from authorized approver.');
                             if (inReplyTo) {
                                 console.log('Original message ID:', inReplyTo);
@@ -196,7 +134,7 @@ function checkEmails() {
                         } else {
                             console.log('No valid approval detected:', {
                                 isApprover: fromEmail.toLowerCase() === process.env.APPROVER_EMAIL.toLowerCase(),
-                                hasApprovalText: html.toLowerCase().includes('approved'),
+                                hasApprovalText: html.toLowerCase().includes('[approved]'),
                                 fromEmail: fromEmail
                             });
                         }
@@ -274,36 +212,89 @@ async function searchSentEmailById(messageId) {
     }
 }
 
-function forwardEmail(parsedEmail) {
-    const recipientEmails = [
-        'ibrahim.khalil_ug25@ashoka.edu.in',
-    ];
-
-    const mailOptions = {
-        from: `Organisation Mail <${process.env.MAIL_ID}>`,
-        to: recipientEmails.join(','), // Forward to custom recipients
-        subject: `${parsedEmail.subject}`,
-        // text: parsedEmail.text,
-        html: parsedEmail.html,
-        attachments: parsedEmail.attachments
-    };
-
-    TRANSPORTER.sendMail(mailOptions, (error, info) => {
-        if (error) {
-            console.error('Forwarding error:', error);
-            return;
-        }
-        console.log('Original email forwarded successfully:', info.messageId);
-    });
+function readConfirmedMailingList() {
+    try {
+        const data = fs.readFileSync('mailingList.json');
+        return JSON.parse(data).filter(entry => entry.status === 'confirmed').map(entry => entry.email);
+    } catch (error) {
+        console.error('Error reading mailing list:', error);
+        return [];
+    }
 }
 
-imap.once('error', (err) => console.error('IMAP Error:', err));
-imap.once('end', () => {
-    console.log('IMAP Connection closed. Reconnecting...');
-    setTimeout(() => imap.connect(), 5000); // Reconnect after 5 seconds
-});
+function forwardEmail(parsedEmail) {
+    const recipientEmails = readConfirmedMailingList();
+    const BATCH_SIZE = 100; // Gmail max per email
+    const DAILY_LIMIT = 500; // Max recipients per day
+    const DELAY_MS = 3000; // 3 seconds between batches to avoid spam filters
+    const DAY_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-imap.connect();
+    if (recipientEmails.length === 0) {
+        console.log('No confirmed recipients to send emails to.');
+        return;
+    }
+
+    let totalSent = 0;
+
+    function sendBatch(startIndex) {
+        if (startIndex >= recipientEmails.length) {
+            console.log('All emails sent successfully!');
+            return;
+        }
+
+        if (totalSent >= DAILY_LIMIT) {
+            console.log(`Daily limit reached (${DAILY_LIMIT} emails). Pausing for 24 hours...`);
+            setTimeout(() => sendBatch(startIndex), DAY_MS);
+            return;
+        }
+
+        const batch = recipientEmails.slice(startIndex, startIndex + BATCH_SIZE);
+        totalSent += batch.length;
+
+        const mailOptions = {
+            from: `${process.env.FORWARD_EMAIL_ALIAS} <${process.env.MAIL_ID}>`,
+            bcc: batch.join(','), // Use BCC for privacy
+            subject: `${parsedEmail.subject}`,
+            html: parsedEmail.html,
+            attachments: parsedEmail.attachments
+        };
+
+        TRANSPORTER.sendMail(mailOptions, (error, info) => {
+            if (error) {
+                console.error(`Error sending batch ${startIndex / BATCH_SIZE + 1}:`, error);
+                return;
+            }
+            console.log(`Batch ${startIndex / BATCH_SIZE + 1} sent successfully:`, info.messageId);
+
+            setTimeout(() => sendBatch(startIndex + BATCH_SIZE), DELAY_MS);
+        });
+    }
+
+    console.log(`Starting email sending process...`);
+    sendBatch(0);
+}
+
+
+// function forwardEmail(parsedEmail) {
+//     const recipientEmails = process.env.RECIPIENT_EMAILS;
+
+//     const mailOptions = {
+//         from: `Organisation Mail <${process.env.MAIL_ID}>`,
+//         to: recipientEmails, // Forward to custom recipients
+//         subject: `${parsedEmail.subject}`,
+//         // text: parsedEmail.text,
+//         html: parsedEmail.html,
+//         attachments: parsedEmail.attachments
+//     };
+
+//     TRANSPORTER.sendMail(mailOptions, (error, info) => {
+//         if (error) {
+//             console.error('Forwarding error:', error);
+//             return;
+//         }
+//         console.log('Original email forwarded successfully:', info.messageId);
+//     });
+// }
 
 // Middleware to parse JSON bodies
 app.use(express.json());
@@ -313,29 +304,100 @@ app.use(express.static('public'));
 // Set view engine
 app.set('view engine', 'ejs');
 
-// Function to read CSV file
-function readCsvFile(filePath) {
-    const results = [];
-    return new Promise((resolve, reject) => {
-        fs.createReadStream(filePath)
-            .pipe(csv())
-            .on('data', (data) => results.push(data))
-            .on('end', () => resolve(results))
-            .on('error', (error) => reject(error));
-    });
-}
-
-router.get('/dashboard', async (req, res) => {
-    // Get all pending emails
-    // const emails = readJsonFile('emails.json') || [];
-    // const pendingEmails = emails.filter((email) => email.status === 'pending');
-    // res.render('dashboard', { pendingEmails });
-    res.render('dashboard');
-});
 
 router.get('/', async (req, res) => {
-    res.render('outbox');
+    res.redirect('/compose');
 });
+
+
+router.get('/subscribe', async (req, res) => {
+    res.render('subscribe');
+});
+
+// Generate a 6-digit OTP
+const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
+
+// Read the mailing list file
+const readMailingList = () => {
+    if (!fs.existsSync(MAILING_LIST_FILE)) return [];
+    return JSON.parse(fs.readFileSync(MAILING_LIST_FILE, 'utf8'));
+};
+
+// Write to the mailing list file
+const writeMailingList = (data) => {
+    fs.writeFileSync(MAILING_LIST_FILE, JSON.stringify(data, null, 4));
+};
+
+// Send OTP email
+const sendOTPEmail = async (email, otp) => {
+    const mailOptions = {
+        from: process.env.MAIL_ID,
+        to: email,
+        subject: 'Your OTP Code',
+        text: `Your OTP code is: ${otp}. It is valid for 10 minutes.`
+    };
+
+    try {
+        await TRANSPORTER.sendMail(mailOptions);
+        console.log(`OTP sent to ${email}`);
+        return true;
+    } catch (error) {
+        console.error('Error sending OTP:', error);
+        return false;
+    }
+};
+
+
+router.post('/subscribe-get-otp', async (req, res) => {
+    const { email } = req.body;
+    console.log(req.body);
+    let mailingList = readMailingList();
+    let existingEntry = mailingList.find(entry => entry.email === email);
+    const otp = generateOTP();
+    if (existingEntry) {
+        existingEntry.otp = otp;
+        existingEntry.status = 'pending';
+    } else {
+        mailingList.push({ email, status: 'pending', otp });
+    }
+    writeMailingList(mailingList);
+    success = await sendOTPEmail(email, otp);
+console.log(success);
+if (success) {
+    res.status(202).json({ message: 'OTP sent successfully' });
+} else {
+    res.status(400).json({ error: 'Failed to send OTP' });
+}
+
+});
+
+router.post('/subscribe-validate-otp', async (req, res) => {
+    const { email, otp, action } = req.body;
+    let mailingList = readMailingList();
+    let existingEntry = mailingList.find(entry => entry.email === email);
+
+    if (!existingEntry) {
+        return res.status(404).json({ error: 'Email not found' });
+    }
+    if (existingEntry.otp !== otp) {
+        return res.status(401).json({ error: 'Invalid OTP' });
+    }
+    if (parseInt(action) === 1) {
+        existingEntry.status = 'confirmed';
+        existingEntry.otp = ""; // Clear OTP after successful validation
+        writeMailingList(mailingList);
+        return res.status(202).json({ message: 'Email confirmed successfully!' });
+    }
+
+    if (parseInt(action) === -1) {
+        mailingList = mailingList.filter(entry => entry.email !== email);
+        writeMailingList(mailingList);
+        return res.status(202).json({ message: 'Email removed successfully!' });
+    }
+
+    return res.status(400).json({ error: 'Invalid action' });
+});
+
 
 router.get('/compose', async (req, res) => {
     res.render('compose');
@@ -343,11 +405,12 @@ router.get('/compose', async (req, res) => {
 
 
 router.post('/compose', upload.array("files"), async (req, res) => {
-    const approverEmail = 'vansh.bothra_ug25@ashoka.edu.in';
+    const approverEmail = process.env.APPROVER_EMAIL;
 
     const mailOptions = {
         from: `Mail Approval <${process.env.MAIL_ID}>`,
         to: approverEmail,
+        cc: req.body.email,
         subject: req.body.subject,
         html: req.body.mailBody,
         attachments: req.files ? req.files.map(file => ({
@@ -383,207 +446,6 @@ router.post('/compose', upload.array("files"), async (req, res) => {
     }
 });
 
-// router.post('/compose', upload.array("files"), async (req, res) => {
-
-//     // Handle file uploads
-//     const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 10 MB in bytes
-
-//     // Calculate total size of uploaded files
-//     let totalSize = 0;
-//     req.files.forEach((file) => {
-//         totalSize += file.size;
-//     });
-
-//     // Check if total size exceeds 5MB
-//     if (totalSize > MAX_TOTAL_SIZE) {
-//         return res
-//             .status(400)
-//             .send(
-//                 `Total file size exceeds 10MB. Your files total: ${(
-//                     totalSize /
-//                     (1024 * 1024)
-//                 ).toFixed(2)}MB`
-//             );
-//     }
-
-//     const attachment_path = [];
-//     if (req.files && req.files.length > 0) {
-//         for (const file of req.files) {
-//             const response = await drive.files.create({
-//                 requestBody: {
-//                     name: file.originalname,
-//                     mimeType: file.mimetype,
-//                     parents: [process.env.GOOGLE_DRIVE_FOLDER_ID],
-//                 },
-//                 media: {
-//                     mimeType: file.mimetype,
-//                     body: fs.createReadStream(file.path),
-//                 },
-//             });
-
-//             // Make the file publicly accessible
-//             await drive.permissions.create({
-//                 fileId: response.data.id,
-//                 requestBody: {
-//                     role: "reader",
-//                     type: "anyone",
-//                 },
-//             });
-
-//             const result = await drive.files.get({
-//                 fileId: response.data.id,
-//                 fields: "webViewLink, webContentLink",
-//             });
-
-//             attachment_path.push(result.data.webViewLink);
-
-//             // Delete the temporary file
-//             fs.unlinkSync(file.path);
-//         }
-//     }
-
-//     const mailData = {
-//         alias: req.body.alias,
-//         senderName: req.body.senderName,
-//         senderEmail: req.body.senderEmail,
-//         subject: req.body.subject,
-//         mailBody: req.body.mailBody,
-//         status: 'pending',
-//         attachments: attachment_path,
-//         timestamp: new Date().toISOString()
-//     };
-
-//     try {
-//         let emails = readJsonFile('emails.json') || [];
-//         emails.push(mailData);
-//         fs.writeFileSync('emails.json', JSON.stringify(emails, null, 2));
-//         res.status(200).json({ message: 'Email data saved successfully' });
-//     } catch (error) {
-//         console.error('Error saving email data:', error);
-//         res.status(500).json({ error: 'Failed to save email data' });
-//     }
-// });
-
-
-// router.post("/mail-approved", async (req, res) => {
-
-//     // According to alias read csv file and get all emails
-//     const emails = await readCsvFile(`./${req.body.alias}.csv`);
-
-//     const attachmentIds = extractFileIds(req.body.attachment_path);
-//     const attachments = await Promise.all(
-//       attachmentIds.map(async (fileId, index) => {
-//         try {
-//           // Get file metadata
-//           const fileMetadata = await drive.files.get({
-//             fileId: fileId,
-//             fields: "name, mimeType",
-//           });
-
-//           // Get file content
-//           const response = await drive.files.get(
-//             { fileId: fileId, alt: "media" },
-//             { responseType: "stream" }
-//           );
-
-//           // Convert stream to buffer
-//           const buffers = [];
-//           for await (const chunk of response.data) {
-//             buffers.push(chunk);
-//           }
-//           const fileBuffer = Buffer.concat(buffers);
-
-//           return {
-//             filename: fileMetadata.data.name,
-//             content: fileBuffer,
-//             contentType: fileMetadata.data.mimeType,
-//           };
-//         } catch (error) {
-//           console.error(`Error fetching attachment ${fileId}:`, error.message);
-//           return null;
-//         }
-//       })
-//     );
-
-//     // Filter out any null attachments (failed downloads)
-//     const validAttachments = attachments.filter(
-//       (attachment) => attachment !== null
-//     );
-
-//     const mailOptions = {
-//         from: `<${process.env.MAIL_ID}>`,
-//         to: emails.map((email) => email.email).join(", "),
-//         cc: req.body.senderEmail,
-//         subject: req.body.subject,
-//         html: req.body.mailBody,
-//         attachments: validAttachments,
-//     };
-
-//     try {
-//         await new Promise((resolve, reject) => {
-//             // Send the email
-//             TRANSPORTER.sendMail(mailOptions, async (error, info) => {
-//                 if (error) {
-//                     console.error("Error occurred:", error.message);
-//                     reject(error);
-//                 } else {
-//                     // Mark the email as sent
-//                     let emails = readJsonFile('emails.json') || [];
-//                     emails = emails.map((email) => {
-//                         if (email.timestamp === req.body.timestamp) {
-//                             email.status = 'sent';
-//                         }
-//                         return email;
-//                     });
-//                     fs.writeFileSync('emails.json', JSON.stringify(emails, null, 2));
-//                     console.log("Email sent successfully!", info.messageId);
-//                     resolve(info);
-//                 }
-//             });
-//         });
-
-//         // Delete files from Google Drive
-//         for (const fileId of attachmentIds) {
-//             try {
-//                 await drive.files.delete({ fileId: fileId });
-//                 console.log(`File ${fileId} deleted successfully.`);
-//             } catch (error) {
-//                 console.error(`Error deleting file ${fileId}:`, error.message);
-//             }
-//         }
-
-//         res.sendStatus(202);
-//     } catch (error) {
-//         console.error("Error:", error.message);
-//         res.sendStatus(400);
-//     }
-// });
-
-// router.post('/mail-rejected', async (req, res) => {
-//     const attachmentIds = extractFileIds(req.body.attachment_path);
-
-//     // Mark the email as rejected
-//     let emails = readJsonFile('emails.json') || [];
-//     emails = emails.map((email) => {
-//         if (email.timestamp === req.body.timestamp) {
-//             email.status = 'rejected';
-//         }
-//         return email;
-//     });
-//     fs.writeFileSync('emails.json', JSON.stringify(emails, null, 2));
-    
-//     // Delete files from Google Drive
-//     for (const fileId of attachmentIds) {
-//         try {
-//           await drive.files.delete({ fileId: fileId });
-//           console.log(`File ${fileId} deleted successfully.`);
-//         } catch (error) {
-//           console.error(`Error deleting file ${fileId}:`, error.message);
-//         }
-//     }
-    
-//     res.sendStatus(202);
-// });
 
 // Start server
 app.listen(port, () => {
